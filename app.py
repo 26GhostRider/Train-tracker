@@ -381,17 +381,16 @@ def parse_darwin_services(raw_data, filter_operator, board_type="Departures"):
 
             plat = item.get("platform", "1")
 
-            # 1. Try official Darwin RSID first
+            # Accurate Headcode / UID extraction prioritizing RSID, then trainUid
             uid = None
             for key in ["rsid", "rsId"]:
                 val = item.get(key)
-                if val and str(val).strip():
+                if val and str(val).strip() and str(val).strip() != "----":
                     uid = str(val).strip().upper()
                     break
 
-            # 2. Fallback: Use Darwin trainUid if available, else formatted index
-            train_uid_raw = item.get("trainUid", "")
             if not uid or uid == "----":
+                train_uid_raw = item.get("trainUid", "")
                 if train_uid_raw and str(train_uid_raw).strip():
                     uid = str(train_uid_raw).strip().upper()
                 else:
