@@ -4,19 +4,23 @@ import time
 import streamlit as st
 import stomp
 
-# Configure the Streamlit page
 st.set_page_config(page_title="Train Describer Tracker", layout="wide")
 
-# Initialize session state for storing live data safely across reruns
+# Initialize session state
 if "active_trains" not in st.session_state:
     st.session_state.active_trains = {}
 if "system_logs" not in st.session_state:
     st.session_state.system_logs = []
+if "connection_status" not in st.session_state:
+    st.session_state.connection_status = "Connecting..."
 
 
 class TDListener(stomp.ConnectionListener):
     def on_error(self, frame):
-        print(f"Received error: {frame.body}")
+        st.session_state.connection_status = f"Error: {frame.body}"
+
+    def on_disconnected(self):
+        st.session_state.connection_status = "Disconnected from feed"
 
     def on_message(self, frame):
         try:
@@ -24,7 +28,6 @@ class TDListener(stomp.ConnectionListener):
             for message in data:
                 msg_type = message.get("msg_type")
 
-                # Append to control logs
                 st.session_state.system_logs.insert(0, {
                     "type": msg_type,
                     "raw": message
@@ -32,7 +35,6 @@ class TDListener(stomp.ConnectionListener):
                 if len(st.session_state.system_logs) > 100:
                     st.session_state.system_logs.pop()
 
-                # Parse Train Describer movements
                 if msg_type in ["CA", "CT"]:
                     area = message.get("area")
                     berth = message.get("to", message.get("berth"))
@@ -54,29 +56,39 @@ class TDListener(stomp.ConnectionListener):
             print(f"Error parsing TD message: {e}")
 
 
-@st.cache_resource
-def start_stomp_listener():
-    # Replace with your Network Rail Data Feed credentials
+def run_stomp_client():
     host = 'datafeeds.networkrail.co.uk'
     port = 61613
     username = 'YOUR_USERNAME'
     password = 'YOUR_PASSWORD'
     topic = '/topic/TD_SE_AREA'
 
-    conn = stomp.Connection([(host, port)])
-    conn.set_listener('', TDListener())
-    conn.connect(username, password, wait=True)
-    conn.subscribe(destination=topic, id=1, ack='auto')
+    try:
+        conn = stomp.Connection([(host, port)])
+        conn.set_listener('', TDListener())
+        conn.connect(username, password, wait=True)
+        conn.subscribe(destination=topic, id=1, ack='auto')
+        st.session_state.connection_status = "Connected successfully!"
+
+        # Keep the thread alive
+        while True:
+            time.sleep(1)
+    except Exception as e:
+        st.session_state.connection_status = f"Connection failed: {str(e)}"
 
 
-# Start background listener thread
-try:
-    start_stomp_listener()
-except Exception as e:
-    st.sidebar.error(f"STOMP Connection Error: {e}")
+# Start the listener in a background thread only once
+if "thread_started" not in st.session_state:
+    st.session_state.thread_started = True
+    t = threading.Thread(target=run_stomp_client, daemon=True)
+    t.start()
 
-# Streamlit User Interface Layout
+# --- UI Layout ---
 st.title("🚆 Network Rail Train Describer & Control Logs")
+
+# Sidebar status
+st.sidebar.subheader("Feed Status")
+st.sidebar.write(st.session_state.connection_status)
 
 col1, col2 = st.columns(2)
 
@@ -92,11 +104,10 @@ with col2:
     st.subheader("Control Logs Stream")
     st.write(f"Total Log Entries: {len(st.session_state.system_logs)}")
     if st.session_state.system_logs:
-        # Display latest logs
         st.dataframe(st.session_state.system_logs[:20], use_container_width=True)
     else:
         st.info("No logs recorded yet.")
 
-# Auto-refresh the Streamlit app every few seconds to show live updates
+# Auto-refresh to pull latest messages into the UI
 time.sleep(2)
 st.rerun()
